@@ -1,0 +1,11 @@
+imagenet
+CIFAR10
+data
+scratch_data
+process_data
+Untitled.ipynb
+.ipynb_checkpoints
+scratch
+__pycache__
+*.gif
+pyrightconfig.json
