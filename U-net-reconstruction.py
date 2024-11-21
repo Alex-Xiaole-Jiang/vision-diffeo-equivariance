@@ -100,145 +100,146 @@ def get_diffeo_blurred_image(images, diffeos, inv_diffeos, number_of_samples):
      blurred = nn.functional.grid_sample(distorted, inv_diffeos[0][indices], align_corners = True)
      blurr_list.append((blurred).squeeze())
   return torch.stack(blurr_list)
-#%%
-# if __name__ == '__main__.py':
+
+
 # Main scirpt start
-logging.info('get model and subset dataset')
+if __name__ == '__main__.py':
 
-ImageNet_path = '/imagenet'
-number_of_training_image_per_class = 5
-batch_size = 200
-number_of_channels_to_use = 8
-activation_layer = 5
-logging.info(f'total a total of {number_of_training_image_per_class * 1000} training images')
+  logging.info('get model and subset dataset')
+  ImageNet_path = '/imagenet'
+  number_of_training_image_per_class = 5
+  batch_size = 200
+  number_of_channels_to_use = 8
+  activation_layer = 5
+  logging.info(f'total a total of {number_of_training_image_per_class * 1000} training images')
 
-# model and dataset
-vision_model = tv.models.efficientnet_v2_s(weights = tv.models.EfficientNet_V2_S_Weights.DEFAULT).to(device)
-vision_model.eval();
-transform = get_inference_transform()
-dataset = tv.datasets.ImageNet(ImageNet_path, split = 'train', transform = transform)
-sub_dataset, test_dataset = get_dataset_subset(dataset, number_of_training_image_per_class)
-dataloader = torch.utils.data.DataLoader(sub_dataset, batch_size = batch_size, shuffle = True)
-testLoader = torch.utils.data.DataLoader(test_dataset, batch_size = batch_size, shuffle = True)
+  # model and dataset
+  vision_model = tv.models.efficientnet_v2_s(weights = tv.models.EfficientNet_V2_S_Weights.DEFAULT).to(device)
+  vision_model.eval();
+  transform = get_inference_transform()
+  dataset = tv.datasets.ImageNet(ImageNet_path, split = 'train', transform = transform)
+  sub_dataset, test_dataset = get_dataset_subset(dataset, number_of_training_image_per_class)
+  dataloader = torch.utils.data.DataLoader(sub_dataset, batch_size = batch_size, shuffle = True)
+  testLoader = torch.utils.data.DataLoader(test_dataset, batch_size = batch_size, shuffle = True)
 
-logging.info('got model and dataset/loader')
-logging.info('get inv/diffeo')
+  logging.info('got model and dataset/loader')
+  logging.info('get inv/diffeo')
 
-x_range = y_range = [0,3]
-number_of_non_zero_diffeo_parameter = 3
-diffeo_strength = [0.1]
-total_number_of_random_diffeos = 200
-diffeo_sample_num = 8
-blurry_resolution = 192
+  x_range = y_range = [0,3]
+  number_of_non_zero_diffeo_parameter = 3
+  diffeo_strength = [0.1]
+  total_number_of_random_diffeos = 200
+  diffeo_sample_num = 8
+  blurry_resolution = 192
 
-diffeos = get_diffeo_container(x_range, 
-                               y_range, 
-                               number_of_non_zero_diffeo_parameter, 
-                               diffeo_strength,
-                               total_number_of_random_diffeos,
-                               blurry_resolution,
-                               device = device)
+  diffeos = get_diffeo_container(x_range, 
+                                 y_range, 
+                                 number_of_non_zero_diffeo_parameter, 
+                                 diffeo_strength,
+                                 total_number_of_random_diffeos,
+                                 blurry_resolution,
+                                 device = device)
 
-inv_diffeos,_,_ = get_inv_diffeo_container(diffeos, res = blurry_resolution, device = device)
+  inv_diffeos,_,_ = get_inv_diffeo_container(diffeos, res = blurry_resolution, device = device)
 
-logging.info('got inv/diffeos')
-logging.info('initialize denoising autoencoder and training routine')
+  logging.info('got inv/diffeos')
+  logging.info('initialize denoising autoencoder and training routine')
 
-model_config = {
-        'in_channels': 1,
-        'out_channels': 1,
-        'initial_filters': 16,
-        'depth': 3,
-        'conv_kwargs': {'kernel_size': 3, 'padding': 1},
-        'upsample_kwargs': {'mode': 'bilinear', 'align_corners': True},
-        'num_conv_in_resid':[2,2,2,2],
-        'num_resid_blocks':[2,3,3,6],
-        'num_conv_in_skip':[2,2,2]
-    }
-denoiser = UNet(model_config)
-denoiser.to(device)
-
-
-logging.info(f'model config: {model_config}')
-model_parameter_num = sum([p.numel() for p in denoiser.parameters()])
-logging.info(f'model with {model_parameter_num} number of parameters')
-
-model_weights_dir = f'/vast/xj2173/diffeo/scratch_data/Unet_weights/{int(round(model_parameter_num/1000))}k/'
-os.makedirs(model_weights_dir, exist_ok=True)
-
-loading_model = True
-if loading_model:
-   model_save = torch.load(model_weights_dir+'model_weights_{i}.pth', map_location=torch.device('cpu'))
-   denoiser = UNet(model_save['model_config'])
-   denoiser.load_state_dict(model_save['model_state_dict'])
-   denoiser = denoiser.to(device)
+  model_config = {
+          'in_channels': 1,
+          'out_channels': 1,
+          'initial_filters': 16,
+          'depth': 3,
+          'conv_kwargs': {'kernel_size': 3, 'padding': 1},
+          'upsample_kwargs': {'mode': 'bilinear', 'align_corners': True},
+          'num_conv_in_resid':[2,2,2,2],
+          'num_resid_blocks':[2,3,3,6],
+          'num_conv_in_skip':[2,2,2]
+      }
+  denoiser = UNet(model_config)
+  denoiser.to(device)
 
 
-learning_rate = 0.001 # default, previously 0.05 too large
-weight_decay = 0.01
-epochs = 40
-loss_fn = nn.MSELoss()
+  logging.info(f'model config: {model_config}')
+  model_parameter_num = sum([p.numel() for p in denoiser.parameters()])
+  logging.info(f'model with {model_parameter_num} number of parameters')
 
-optimizer = optim.AdamW(denoiser.parameters(),
-                              lr=learning_rate,
-                              weight_decay=weight_decay)
+  model_weights_dir = f'/vast/xj2173/diffeo/scratch_data/Unet_weights/{int(round(model_parameter_num/1000))}k/'
+  os.makedirs(model_weights_dir, exist_ok=True)
 
-logging.info(f'training {epochs} epochs with lr:{learning_rate}, weight_decay:{weight_decay}')
-logging.info('training start')
+  loading_model = True
+  if loading_model:
+     model_save = torch.load(model_weights_dir+'model_weights_{i}.pth', map_location=torch.device('cpu'))
+     denoiser = UNet(model_save['model_config'])
+     denoiser.load_state_dict(model_save['model_state_dict'])
+     denoiser = denoiser.to(device)
 
-total_image_num = batch_size * len(dataloader)
-trai_loss_hist = []
-test_loss_hist = []
 
-for i in (range(epochs)):
-  trai_loss_accumulant = 0
-  test_loss_accumulant = 0
+  learning_rate = 0.001 # default, previously 0.05 too large
+  weight_decay = 0.01
+  epochs = 40
+  loss_fn = nn.MSELoss()
 
-  for images, _ in dataloader:
-    logging.debug('start sub-epoch loop')
-    train_img = images.to(device)
-    train_img = get_activation_of_training_image(vision_model, train_img, activation_layer)
-    indices = torch.randperm(train_img.shape[1])[:diffeo_sample_num]
-    train_img = train_img[:,indices]
-    
-    blurred = get_diffeo_blurred_image(train_img, diffeos, inv_diffeos, diffeo_sample_num)
-    logging.debug('data prep finished')
+  optimizer = optim.AdamW(denoiser.parameters(),
+                                lr=learning_rate,
+                                weight_decay=weight_decay)
 
-    for target, blurry in zip(train_img, blurred):
-      optimizer.zero_grad()
-      target = target.expand(len(blurry), -1, -1, -1)
-      diff, channel, x, y = target.shape
-      target = torch.reshape(target ,(diff*channel, 1, x, y))
-      blurry = torch.reshape(blurry ,(diff*channel, 1, x, y))
-      output = denoiser(blurry)
-      loss = loss_fn(output, target)
-      loss.backward()
-      optimizer.step()
-      trai_loss_accumulant += loss.item()
-    logging.debug('sub-epoch loop finished')
-  
-  logging.info('calculating training loss')
-  with torch.no_grad():
-    for test_images, _ in testLoader:
-      test_img = test_images.to(device)
-      test_img = get_activation_of_training_image(vision_model, test_img, activation_layer)
+  logging.info(f'training {epochs} epochs with lr:{learning_rate}, weight_decay:{weight_decay}')
+  logging.info('training start')
+
+  total_image_num = batch_size * len(dataloader)
+  trai_loss_hist = []
+  test_loss_hist = []
+
+  for i in (range(epochs)):
+    trai_loss_accumulant = 0
+    test_loss_accumulant = 0
+
+    for images, _ in dataloader:
+      logging.debug('start sub-epoch loop')
+      train_img = images.to(device)
+      train_img = get_activation_of_training_image(vision_model, train_img, activation_layer)
+      indices = torch.randperm(train_img.shape[1])[:diffeo_sample_num]
+      train_img = train_img[:,indices]
+
       blurred = get_diffeo_blurred_image(train_img, diffeos, inv_diffeos, diffeo_sample_num)
+      logging.debug('data prep finished')
+
       for target, blurry in zip(train_img, blurred):
+        optimizer.zero_grad()
         target = target.expand(len(blurry), -1, -1, -1)
         diff, channel, x, y = target.shape
         target = torch.reshape(target ,(diff*channel, 1, x, y))
         blurry = torch.reshape(blurry ,(diff*channel, 1, x, y))
         output = denoiser(blurry)
         loss = loss_fn(output, target)
-        test_loss_accumulant += loss.item()
-  
-  logging.info(f'test loss is {test_loss_accumulant/(batch_size * len(testLoader))} at epoch {i}')
-  logging.info(f'training loss is {trai_loss_accumulant/total_image_num} at epoch {i}')
-  test_loss_hist.append(test_loss_accumulant/(batch_size * len(testLoader)))
-  trai_loss_hist.append(trai_loss_accumulant/total_image_num)
-  
-  torch.save({'model_config': model_config, 
-              'model_state_dict': denoiser.state_dict(),
-              'train_loss': trai_loss_hist,
-              'test_loss': test_loss_hist},
-              model_weights_dir + f'model_weights_{i}_new.pth')
+        loss.backward()
+        optimizer.step()
+        trai_loss_accumulant += loss.item()
+      logging.debug('sub-epoch loop finished')
+
+    logging.info('calculating training loss')
+    with torch.no_grad():
+      for test_images, _ in testLoader:
+        test_img = test_images.to(device)
+        test_img = get_activation_of_training_image(vision_model, test_img, activation_layer)
+        blurred = get_diffeo_blurred_image(train_img, diffeos, inv_diffeos, diffeo_sample_num)
+        for target, blurry in zip(train_img, blurred):
+          target = target.expand(len(blurry), -1, -1, -1)
+          diff, channel, x, y = target.shape
+          target = torch.reshape(target ,(diff*channel, 1, x, y))
+          blurry = torch.reshape(blurry ,(diff*channel, 1, x, y))
+          output = denoiser(blurry)
+          loss = loss_fn(output, target)
+          test_loss_accumulant += loss.item()
+
+    logging.info(f'test loss is {test_loss_accumulant/(batch_size * len(testLoader))} at epoch {i}')
+    logging.info(f'training loss is {trai_loss_accumulant/total_image_num} at epoch {i}')
+    test_loss_hist.append(test_loss_accumulant/(batch_size * len(testLoader)))
+    trai_loss_hist.append(trai_loss_accumulant/total_image_num)
+
+    torch.save({'model_config': model_config, 
+                'model_state_dict': denoiser.state_dict(),
+                'train_loss': trai_loss_hist,
+                'test_loss': test_loss_hist},
+                model_weights_dir + f'model_weights_{i}_new.pth')
