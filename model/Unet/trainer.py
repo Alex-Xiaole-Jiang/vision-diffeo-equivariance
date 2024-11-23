@@ -12,8 +12,8 @@ from model.Unet.Unet import UNet
 
 import os
 import logging
-from dataclasses import dataclass, field
-from typing import Tuple, List, Dict, Any
+from dataclasses import dataclass, field, asdict
+from typing import Tuple, Callable, List, Dict, Any
 
 
 @dataclass
@@ -38,8 +38,12 @@ class DenoiserConfig:
 @dataclass
 class TrainingConfig:
     """Configuration for training parameters"""
-    learning_rate: float = 0.001
-    weight_decay: float = 0.01
+    optimizer: Callable = lambda param: optim.AdamW(
+            param,
+            lr=0.001,
+            weight_decay=0.01
+        )
+    loss: Callable = nn.MSELoss()
     epochs: int = 40
     batch_size: int = 200
     num_training_images_per_class: int = 5
@@ -47,6 +51,61 @@ class TrainingConfig:
     activation_layer: int = 5
     diffeo_sample_num: int = 8
     model_save_dir: str = field(default_factory=lambda: '/vast/xj2173/diffeo/scratch_data/Unet_weights/')
+    brightness_penalty: int = 1
+
+    def _extract_optimizer_info(self, optimizer_func: Callable) -> tuple[str, Dict[str, Any]]:
+        """Extract optimizer name and parameters from a lambda or function."""
+        # Create a dummy parameter to inspect the optimizer
+        dummy_param = torch.nn.Parameter(torch.empty(1))
+        optimizer_instance = optimizer_func([dummy_param])
+        
+        # Get optimizer class name
+        optimizer_name = optimizer_instance.__class__.__name__
+        
+        # Extract parameters from the optimizer
+        # Note: defaults is a dict containing all parameters including defaults
+        defaults = optimizer_instance.defaults
+        
+        # Get the actual set parameters (not including unset defaults)
+        param_groups = optimizer_instance.param_groups[0]
+        actual_params = {
+            key: value for key, value in param_groups.items()
+            if key in defaults and key != 'params'  # exclude the params key
+        }
+        
+        return optimizer_name, actual_params
+
+    def __getstate__(self):
+        state = asdict(self)  # Convert dataclass to dict
+        
+        # Extract optimizer info
+        optimizer_name, optimizer_params = self._extract_optimizer_info(self.optimizer)
+        
+        # Replace optimizer function with serializable info
+        state['optimizer'] = {
+            'name': optimizer_name,
+            'params': optimizer_params
+        }
+        return state
+
+    def __setstate__(self, state):
+        # Create mapping of optimizer names to classes
+        optimizer_map = {
+            'SGD': optim.SGD,
+            'Adam': optim.Adam,
+            'AdamW': optim.AdamW
+        }
+        
+        # Get optimizer info
+        optimizer_info = state['optimizer']
+        optimizer_class = optimizer_map[optimizer_info['name']]
+        optimizer_params = optimizer_info['params']
+        
+        # Reconstruct optimizer function
+        state['optimizer'] = lambda params: optimizer_class(params, **optimizer_params)
+        
+        # Update instance
+        self.__dict__.update(state)
 
 @dataclass
 class DiffeoConfig:
@@ -81,6 +140,9 @@ class DiffeoDenoiseTrainer:
         self.denoiser_config = denoiser_config or DenoiserConfig()
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.imagenet_path = imagenet_path
+        self.epoch_trained = 0
+        self.train_losses = []
+        self.test_losses = []
         self._setup_logging()
         self._initialize_components()
 
@@ -107,12 +169,7 @@ class DiffeoDenoiseTrainer:
         self.denoiser = self._setup_denoiser()
         logging.info(f'denoiser initialized, has {self.param_count} number of parameters')
         logging.info(f'denoiser has {self.denoiser_config}')
-        self.optimizer = optim.AdamW(
-            self.denoiser.parameters(),
-            lr=self.config.learning_rate,
-            weight_decay=self.config.weight_decay
-        )
-        self.loss_fn = nn.MSELoss()
+        self.optimizer, self.loss_fn = self._setup_optimizer_loss()
 
     def _setup_vision_model(self, model_name: str = "efficientnet_v2_s"):
         """
@@ -203,6 +260,10 @@ class DiffeoDenoiseTrainer:
         self.param_count = sum(p.numel() for p in denoiser.parameters())
         return denoiser.to(self.device)
 
+    def _setup_optimizer_loss(self):
+        return self.config.optimizer(self.denoiser.parameters()), self.config.loss
+
+
     @staticmethod
     def _get_dataset_subset(dataset, num_image_per_class):
         class_ranges = []
@@ -226,6 +287,10 @@ class DiffeoDenoiseTrainer:
             torch.utils.data.Subset(dataset, train_indices),
             torch.utils.data.Subset(dataset, test_indices)
         )
+
+    @staticmethod
+    def log_info(info: str):
+        logging.info(info)
 
     def _get_diffeo_container(self) -> sparse_diffeo_container:
         dc = sparse_diffeo_container(
@@ -319,7 +384,8 @@ class DiffeoDenoiseTrainer:
                 blurry = torch.reshape(blurry, (diff * channel, 1, x, y))
                 
                 output = self.denoiser(blurry)
-                loss = self.loss_fn(output, target)
+                brightness_constraint = torch.abs((output.mean([2,3]) - target.mean([2,3])))
+                loss = self.loss_fn(output, target) + torch.mean((brightness_constraint + 1)**2 - 1) * self.config.brightness_penalty
                 loss.backward()
                 self.optimizer.step()
                 train_loss += loss.item()
@@ -346,16 +412,14 @@ class DiffeoDenoiseTrainer:
 
     def train(self, save_dir: str):
         logging.info(f'training starts with {self.config}')
-        os.makedirs(save_dir, exist_ok=True)
-        train_losses = []
-        test_losses = []
+        os.makedirs(save_dir, exist_ok=True)       
 
         for epoch in range(self.config.epochs):
             train_loss, test_loss = self.train_epoch()
-            train_losses.append(train_loss)
-            test_losses.append(test_loss)
+            self.train_losses.append(train_loss)
+            self.test_losses.append(test_loss)
             
-            logging.info(f'Epoch {epoch}: train_loss={train_loss:.6f}, test_loss={test_loss:.6f}')
+            logging.info(f'Epoch {self.epoch_trained}: train_loss={train_loss:.6f}, test_loss={test_loss:.6f}')
             
             # Save model checkpoint
             torch.save({
@@ -363,9 +427,12 @@ class DiffeoDenoiseTrainer:
                 'model_config': self.denoiser_config,
                 'diffeo_config': self.diffeo_config,
                 'model_state_dict': self.denoiser.state_dict(),
-                'train_loss': train_losses,
-                'test_loss': test_losses
-            }, os.path.join(save_dir, f'model_weights_{epoch}.pth'))
+                'train_loss': self.train_losses,
+                'test_loss': self.test_losses,
+                'epoch_trained' : self.epoch_trained
+            }, os.path.join(save_dir, f'model_weights_{self.epoch_trained}.pth'))
+
+            self.epoch_trained += 1
 
 def create_experiment_dir(base_dir: str, param_count: int) -> str:
     """Create a directory for the experiment based on model parameters"""
