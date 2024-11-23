@@ -54,7 +54,7 @@ def find_param_inverse(AB: t.Tensor,
                        num_epochs = 500,
                        resolution = 384, 
                        device = t.device('cpu'),
-                       tqdm_log = True) -> t.Tensor:
+                       disable_tqdm_log = True) -> t.Tensor:
   '''
   Finds inverse parameters for a diffeomorphism using gradient descent.
   
@@ -88,13 +88,13 @@ def find_param_inverse(AB: t.Tensor,
   
   id_grid = get_id_grid(resolution, resolution, device)
   
-  for epoch in tqdm(range(num_epochs), disable=tqdm_log):
+  for epoch in tqdm(range(num_epochs), disable=disable_tqdm_log):
       optimizer.zero_grad()
       new_AB = AB()
       with t.device(device):
           inv_grid = create_grid_sample(resolution, resolution, new_AB[0], new_AB[1]).to(device)
       un_distorted = compose_diffeo_from_left(inv_grid, grid)
-      unreg_loss = loss_fn(un_distorted, id_grid)
+      unreg_loss = loss_fn(un_distorted, id_grid.expand(len(un_distorted),-1,-1,-1))
       loss = unreg_loss * (1 + 0.1 * AB.result.abs().sum()/AB.AB.abs().sum())
       loss.backward()
       optimizer.step()
