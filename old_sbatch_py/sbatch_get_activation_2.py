@@ -26,7 +26,7 @@ inference_transforms = v2.Compose([
 imagenet_val_inference = tv.datasets.ImageNet('vast/diffeo/imagenet', split = 'val', transform = inference_transforms)
 
 sparse_diffeos = sparse_diffeo_container(224, 224)
-diffeo_strength_list = [0.0001, 0.001, 0.005, 0.01, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]
+diffeo_strength_list = [0, 0.00001, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.125, 0.15, 0.175]
 for strength in diffeo_strength_list:
     sparse_diffeos.sparse_AB_append(4, 4, 3, strength, 50)
 sparse_diffeos.get_all_grid()

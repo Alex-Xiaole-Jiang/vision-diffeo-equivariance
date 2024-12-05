@@ -9,3 +9,4 @@ scratch
 __pycache__
 *.gif
 pyrightconfig.json
+.vscode/settings.json

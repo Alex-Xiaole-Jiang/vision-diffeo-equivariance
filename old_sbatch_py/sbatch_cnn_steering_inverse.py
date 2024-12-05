@@ -21,12 +21,12 @@ ImageNet_path = '/vast/xj2173/diffeo/imagenet'
 save_path = '/vast/xj2173/diffeo/scratch_data/steering/ENV2_s_NN/'
 ref_path = '/vast/xj2173/diffeo/scratch_data/steering/ENV2_s_NN/reference/'
 
-num_of_images = 100
+num_of_images = 5
 
 diffeo_strengths = [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]
-diffeo_strengths = [0.001, 0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+diffeo_strengths = [0, 0.00001, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.125, 0.15, 0.175]
 # diffeo_strengths = [0.001]
-num_of_diffeo = 20
+num_of_diffeo = 2
 
 inv_diffeo_save_path = ('/vast/xj2173/diffeo/scratch_data/inv_grids/'
                         f'{len(diffeo_strengths)}-{num_of_diffeo}-4-4-3-224-224_inv_grid_sample.pt')
@@ -58,7 +58,7 @@ def get_ImageNet(transforms = None, batch_size = 1, shuffle = False):
   return dataset, dataloader
 
 def get_diffeo_container(diffeo_strength_list = None, num_of_didffeo = None):
-  diffeo_container = sparse_diffeo_container(224, 224)
+  diffeo_container = sparse_diffeo_container(384, 384)
   for strength in diffeo_strength_list:
       diffeo_container.sparse_AB_append(4, 4, 3, strength, num_of_didffeo)
   diffeo_container.get_all_grid()
@@ -72,7 +72,7 @@ def get_inverse_diffeo(diffeo_container, base_learning_rate = 500, epochs = 1000
 
 def get_steering_layer_shapes(model, layers):
   # get layer size
-  input_size = (1,3,224,224) # standard ImageNet size
+  input_size = (1,3,384,384) # standard ImageNet size
   dummy_input = t.rand(*input_size).to(device)
   hooks = []
   layer_shapes = []
