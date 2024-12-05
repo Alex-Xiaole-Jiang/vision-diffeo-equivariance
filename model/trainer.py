@@ -8,7 +8,8 @@ from torchvision.transforms import v2
 from utils.diffeo_container import sparse_diffeo_container
 from utils.get_model_activation import retrieve_layer_activation
 from utils.inverse_diffeo import find_param_inverse
-from model.Unet.Unet import UNet
+from model.Unet.Unet import UNet, UnetConfig
+from model.EDSR.EDSR import SingleScaleEDSR, SingleScaleEDSRConfig
 
 import os
 import logging
@@ -17,23 +18,15 @@ from typing import Tuple, Callable, List, Dict, Any
 
 
 @dataclass
-class DenoiserConfig:
-    """Configuration for UNet denoiser architecture"""
-    in_channels: int = 1
-    out_channels: int = 1
-    initial_filters: int = 32
-    depth: int = 1
-    conv_kwargs: Dict[str, Any] = field(default_factory=lambda: {
-        'kernel_size': 5, 
-        'padding': 2
-    })
-    upsample_kwargs: Dict[str, Any] = field(default_factory=lambda: {
-        'mode': 'bilinear', 
-        'align_corners': True
-    })
-    num_resid_blocks: List[int] = field(default_factory=lambda: [5, 5])
-    num_conv_in_resid: List[int] = field(default_factory=lambda: [2, 2])
-    num_conv_in_skip: List[int] = field(default_factory=lambda: [2])
+class DiffeoConfig:
+    """Configuration for diffeomorphism parameters"""
+    blurry_resolution: int = 192
+    x_range: List[int] = field(default_factory=lambda: [0, 3])
+    y_range: List[int] = field(default_factory=lambda: [0, 3])
+    num_nonzero_params: int = 3
+    strength: List[float] = field(default_factory=lambda: [0.1])
+    total_random_diffeos: int = 200
+    
 
 @dataclass
 class TrainingConfig:
@@ -107,23 +100,15 @@ class TrainingConfig:
         # Update instance
         self.__dict__.update(state)
 
-@dataclass
-class DiffeoConfig:
-    """Configuration for diffeomorphism parameters"""
-    blurry_resolution: int = 192
-    x_range: List[int] = field(default_factory=lambda: [0, 3])
-    y_range: List[int] = field(default_factory=lambda: [0, 3])
-    num_nonzero_params: int = 3
-    strength: List[float] = field(default_factory=lambda: [0.1])
-    total_random_diffeos: int = 200
 
 #%%
 class DiffeoDenoiseTrainer:
     def __init__(self, 
                  imagenet_path: str,
+                 denoiser_model: str,
+                 denoiser_config: dataclass,
                  train_config: TrainingConfig = None,
                  diffeo_config: DiffeoConfig = None,
-                 denoiser_config: DenoiserConfig = None,
                  device: torch.device = None):
         """
         Initialize the Diffeomorphism Denoising Trainer.
@@ -135,9 +120,10 @@ class DiffeoDenoiseTrainer:
             denoiser_config: UNet denoiser architecture configuration
             device: Torch device to use for training
         """
+        self.denoiser_model = denoiser_model
+        self.denoiser_config = denoiser_config
         self.config = train_config or TrainingConfig()
         self.diffeo_config = diffeo_config or DiffeoConfig()
-        self.denoiser_config = denoiser_config or DenoiserConfig()
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.imagenet_path = imagenet_path
         self.epoch_trained = 0
@@ -244,21 +230,24 @@ class DiffeoDenoiseTrainer:
         inv_diffeos, _, _ = self._get_inv_diffeo_container(diffeos)
         return diffeos, inv_diffeos
 
-    def _setup_denoiser(self, config: DenoiserConfig = None):
+    def _setup_denoiser(self, config: dataclass = None):
         """
         Sets up the UNet denoiser model.
         
         Args:
-            config: DenoiserConfig object with model architecture parameters.
+            config: UnetConfig object with model architecture parameters.
                    If None, uses default configuration.
         
         Returns:
             UNet: Configured denoiser model on the appropriate device
         """
         config = config or self.denoiser_config
-        denoiser = UNet(config.__dict__)
+        if self.denoiser_model == 'UNet':    
+            denoiser = torch.compile(UNet(config.__dict__))
+        if self.denoiser_model == 'SingleScaleEDSR':
+            denoiser = torch.compile(SingleScaleEDSR(config))
         self.param_count = sum(p.numel() for p in denoiser.parameters())
-        return denoiser.to(self.device)
+        return (denoiser).to(self.device)
 
     def _setup_optimizer_loss(self):
         return self.config.optimizer(self.denoiser.parameters()), self.config.loss
@@ -318,8 +307,8 @@ class DiffeoDenoiseTrainer:
         ])
         [A_inv, B_inv], loss_hist, mag_hist = find_param_inverse(
             AB, 
+            resolution=128,
             device=self.device,
-            resolution=self.diffeo_config.blurry_resolution,
             **kwargs
         )
         
@@ -366,17 +355,14 @@ class DiffeoDenoiseTrainer:
 
     def train_epoch(self) -> Tuple[float, float]:
         self.denoiser.train()
+        self.denoiser = self.denoiser
         train_loss = 0
         test_loss = 0
         
         # Training loop
         for images, _ in self.dataloader['train']:
             train_img, blurred = self._process_batch(images)
-            print(train_img.shape)
-            print(blurred.shape)
             for target, blurry in zip(train_img, blurred):
-                print(target.shape)
-                print(blurry.shape)
                 self.optimizer.zero_grad()
                 target = target.expand(len(blurry), -1, -1, -1)
                 diff, channel, x, y = target.shape
@@ -403,7 +389,7 @@ class DiffeoDenoiseTrainer:
                     blurry = torch.reshape(blurry, (diff * channel, 1, x, y))
                     
                     output = self.denoiser(blurry)
-                    test_loss += self.loss_fn(output, target).item()
+                    test_loss += nn.MSELoss()(output, target).item()
 
         return (
             train_loss / (self.config.batch_size * len(self.dataloader['train'])),
@@ -411,7 +397,7 @@ class DiffeoDenoiseTrainer:
         )
 
     def train(self, save_dir: str):
-        logging.info(f'training starts with {self.config}')
+        logging.info(f'training starts with {self.config.__getstate__()}')
         os.makedirs(save_dir, exist_ok=True)       
 
         for epoch in range(self.config.epochs):
@@ -424,6 +410,7 @@ class DiffeoDenoiseTrainer:
             # Save model checkpoint
             torch.save({
                 'training_config': self.config,
+                'denoiser_model': self.denoiser_model,
                 'model_config': self.denoiser_config,
                 'diffeo_config': self.diffeo_config,
                 'model_state_dict': self.denoiser.state_dict(),

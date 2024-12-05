@@ -1,6 +1,27 @@
 #%%
 import torch
 import torch.nn as nn
+from dataclasses import dataclass, field
+from typing import Dict, Any, List
+
+@dataclass
+class UnetConfig:
+    """Configuration for UNet denoiser architecture"""
+    in_channels: int = 1
+    out_channels: int = 1
+    initial_filters: int = 32
+    depth: int = 1
+    conv_kwargs: Dict[str, Any] = field(default_factory=lambda: {
+        'kernel_size': 5, 
+        'padding': 2
+    })
+    upsample_kwargs: Dict[str, Any] = field(default_factory=lambda: {
+        'mode': 'bilinear', 
+        'align_corners': True
+    })
+    num_resid_blocks: List[int] = field(default_factory=lambda: [5, 5])
+    num_conv_in_resid: List[int] = field(default_factory=lambda: [2, 2])
+    num_conv_in_skip: List[int] = field(default_factory=lambda: [2])
 
 class ConvBlock(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, **kwargs):
