@@ -39,12 +39,12 @@ train_config = TrainingConfig(
     activation_layer = 5)
 
 diffeo_config = DiffeoConfig(
-    blurry_resolution = 192,
+    resolution = 192,
     x_range = [0,5],
     y_range = [0,5],
     num_nonzero_params = 3,
     strength = [0.1],
-    total_random_diffeos = 300)
+    num_diffeo_per_strength = 300)
 #%%
 # Initialize trainer
 trainer = DiffeoDenoiseTrainer(
