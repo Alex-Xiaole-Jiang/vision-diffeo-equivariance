@@ -5,7 +5,7 @@ import torch.optim as optim
 import torchvision as tv
 from torchvision.transforms import v2
 
-from utils.diffeo_container import sparse_diffeo_container
+from utils.diffeo_container import sparse_diffeo_container, DiffeoConfig
 from utils.get_model_activation import retrieve_layer_activation
 from utils.inverse_diffeo import find_param_inverse
 from model.Unet.Unet import UNet, UnetConfig
@@ -16,17 +16,6 @@ import logging
 from dataclasses import dataclass, field, asdict
 from typing import Tuple, Callable, List, Dict, Any
 
-
-@dataclass
-class DiffeoConfig:
-    """Configuration for diffeomorphism parameters"""
-    blurry_resolution: int = 192
-    x_range: List[int] = field(default_factory=lambda: [0, 3])
-    y_range: List[int] = field(default_factory=lambda: [0, 3])
-    num_nonzero_params: int = 3
-    strength: List[float] = field(default_factory=lambda: [0.1])
-    total_random_diffeos: int = 200
-    
 
 @dataclass
 class TrainingConfig:
@@ -283,8 +272,8 @@ class DiffeoDenoiseTrainer:
 
     def _get_diffeo_container(self) -> sparse_diffeo_container:
         dc = sparse_diffeo_container(
-            self.diffeo_config.blurry_resolution, 
-            self.diffeo_config.blurry_resolution
+            self.diffeo_config.resolution, 
+            self.diffeo_config.resolution
         )
         for strength in self.diffeo_config.strength:
             dc.sparse_AB_append(
@@ -292,7 +281,7 @@ class DiffeoDenoiseTrainer:
                 self.diffeo_config.y_range,
                 self.diffeo_config.num_nonzero_params,
                 strength,
-                self.diffeo_config.total_random_diffeos
+                self.diffeo_config.num_diffeo_per_strength
             )
         dc.get_all_grid()
         dc.to(self.device)
@@ -313,8 +302,8 @@ class DiffeoDenoiseTrainer:
         )
         
         inv_diffeos = sparse_diffeo_container(
-            self.diffeo_config.blurry_resolution,
-            self.diffeo_config.blurry_resolution,
+            self.diffeo_config.resolution,
+            self.diffeo_config.resolution,
             A=[A_inv.cpu()],
             B=[B_inv.cpu()]
         )
@@ -409,10 +398,10 @@ class DiffeoDenoiseTrainer:
             
             # Save model checkpoint
             torch.save({
-                'training_config': self.config,
+                'training_config': self.config.__getstate__(),
                 'denoiser_model': self.denoiser_model,
-                'model_config': self.denoiser_config,
-                'diffeo_config': self.diffeo_config,
+                'model_config': self.denoiser_config.__dict__,
+                'diffeo_config': self.diffeo_config.__dict__,
                 'model_state_dict': self.denoiser.state_dict(),
                 'train_loss': self.train_losses,
                 'test_loss': self.test_losses,
