@@ -160,3 +160,52 @@ def find_img_inverse(distorted_img: t.Tensor,
             # print(loss.item())
   
   return AB.result.detach() , inv_loss_hist, AB_mag
+
+
+def find_inv_grid(flow_grid, mode ='bilinear', learning_rate = 0.001, epochs = 10000, early_stopping = True, align_corners = True):
+  device = flow_grid.device
+  batch, x_length, y_length, _ = flow_grid.shape
+  x = t.linspace(-1, 1, steps = x_length)
+  y = t.linspace(-1, 1, steps = y_length)
+  X, Y = t.meshgrid(x, y, indexing='ij')
+  reference = t.stack((X, Y, X * Y), dim=0).unsqueeze(0).repeat(batch, 1, 1, 1).to(device)
+  #, t.cos(2*math.pi*X) * t.cos(2*math.pi*Y)
+  id_grid = t.stack((Y, X), dim=-1).unsqueeze(0).repeat(batch, 1, 1, 1).to(device)
+  #2 * id_grid - flow_grid
+  find_inv_model = add_bias_to_grid(id_grid).to(device)
+  loss_fn = nn.MSELoss()
+  optimizer = t.optim.SGD(find_inv_model.parameters(), lr = learning_rate)
+
+  num_epochs = epochs
+  loss_hist = []
+  min_loss = 1e30
+  early_stopping_count = 0
+  for epoch in tqdm(range(num_epochs)):
+    optimizer.zero_grad()
+    output = find_inv_model()
+    distort = t.nn.functional.grid_sample(reference, flow_grid, mode = mode, align_corners = align_corners)
+    #inv_distort = t.nn.functional.grid_sample(reference, output, mode = mode)
+    restored_left  = t.nn.functional.grid_sample(distort, output, mode = mode, align_corners = align_corners)
+    #restored_right = t.nn.functional.grid_sample(inv_distort, flow_grid, mode = mode)
+    left_loss = loss_fn(reference, restored_left)
+    #right_loss = loss_fn(reference, restored_right)
+    loss = left_loss #+ right_loss #+ (t.exp(t.abs(left_loss-right_loss)**2) - 1)
+    #loss =  left_loss + right_loss
+    loss.backward()
+    optimizer.step()
+    if (epoch + 1) % 20 == 0:
+          loss_hist.append(loss.item())
+          if loss_hist[-1]/min_loss >= 1: 
+            early_stopping_count += 1
+            # print(f'Early stopping count: {early_stopping_count}')
+          if loss_hist[-1] < min_loss: 
+            min_loss = loss_hist[-1]
+            early_stopping_count = 0
+    if early_stopping and early_stopping_count >=10: break
+
+  with t.no_grad():
+    flow_grid_inverse_neural = find_inv_model().detach().clone()
+  
+  del find_inv_model
+
+  return flow_grid_inverse_neural, loss_hist, epoch

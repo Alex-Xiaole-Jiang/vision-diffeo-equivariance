@@ -4,7 +4,8 @@ import torch as t
 from torch.nn.functional import grid_sample
 
 from utils.distortion import band_limited_sparse_transform_amplitude
-from utils.distortion import create_grid_sample, compose_diffeo_from_left, find_inv_grid, get_id_grid
+from utils.distortion import create_grid_sample, compose_diffeo_from_left, get_id_grid
+from utils.inverse_diffeo import find_inv_grid
 
 from dataclasses import dataclass, field
 
