@@ -1,7 +1,21 @@
 import torch as t
-from .diffeo_container import diffeo_container
+from utils.diffeo_container import diffeo_container
 
 def retrieve_layer_activation(model, input, layer_index):
+    '''
+    Returns activation of specified layers and model output given input.
+    The function only works with some vision model and ViT, since it unwraps a specific number of children module. 
+
+    Args:
+        model: a torch model to evaluate on
+        input: tensor, the input to be fed into the model
+        layer_index: a list of integers specifying which layer to retrieve
+        
+    Returns:
+        Tuple of 
+            dictionary: key: the layer index, value: the tensor that corresponds to the layer activation
+            tensor: output of model, i.e. model(input) 
+    '''
     activation = {}
     def getActivation(name):
         # the hook signature

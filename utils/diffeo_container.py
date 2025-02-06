@@ -3,9 +3,23 @@ import numpy as np
 import torch as t
 from torch.nn.functional import grid_sample
 
+from utils.distortion import band_limited_sparse_transform_amplitude
+from utils.distortion import create_grid_sample, compose_diffeo_from_left, find_inv_grid, get_id_grid
 
-from .distortion import band_limited_sparse_transform_amplitude
-from .distortion import create_grid_sample, compose_diffeo_from_left, find_inv_grid, get_id_grid
+from dataclasses import dataclass, field
+
+#%%
+@dataclass
+class DiffeoConfig:
+    """Configuration for diffeomorphism parameters"""
+    resolution: int = 192
+    x_range: list[int] = field(default_factory=lambda: [0, 3])
+    y_range: list[int] = field(default_factory=lambda: [0, 3])
+    num_nonzero_params: int = 3
+    strength: list[float] = field(default_factory=lambda: [0.1])
+    num_diffeo_per_strength: int = 10
+
+
 #%%
 class diffeo_container:
   '''
@@ -14,7 +28,7 @@ class diffeo_container:
   Args:
       x_res: X-dimension resolution
       y_res: Y-dimension resolution
-      diffeos: List of diffeomorphism tensors (optional)
+      diffeos: list of diffeomorphism tensors (optional)
       device: PyTorch device for computation
 
   Properties:
@@ -125,8 +139,8 @@ class sparse_diffeo_container(diffeo_container):
     Args:
       x_res: X-dimension resolution
       y_res: Y-dimension resolution
-      A, B: Lists of transformation coefficients (optional)
-      diffeos: List of diffeomorphisms (optional)
+      A, B: lists of transformation coefficients (optional)
+      diffeos: list of diffeomorphisms (optional)
       rng: Random number generator
       seed: Random seed when rng is None
       device: PyTorch device

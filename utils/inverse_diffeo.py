@@ -2,7 +2,7 @@ import torch as t
 import torch.nn as nn 
 import torch.nn.functional as F
 
-from .distortion import compose_diffeo_from_left, create_grid_sample, get_id_grid
+from utils.distortion import compose_diffeo_from_left, create_grid_sample, get_id_grid
 from tqdm import tqdm
 
 torch_seed = 37
