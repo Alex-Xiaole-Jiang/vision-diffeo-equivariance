@@ -10,3 +10,6 @@ __pycache__
 *.gif
 pyrightconfig.json
 .vscode/settings.json
+*.out
+*.err
+*.png
