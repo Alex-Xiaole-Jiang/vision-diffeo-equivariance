@@ -7,20 +7,6 @@ from utils.distortion import band_limited_sparse_transform_amplitude
 from utils.distortion import create_grid_sample, compose_diffeo_from_left, get_id_grid
 from utils.inverse_diffeo import find_inv_grid
 
-from dataclasses import dataclass, field
-
-#%%
-@dataclass
-class DiffeoConfig:
-    """Configuration for diffeomorphism parameters"""
-    resolution: int = 192
-    x_range: list[int] = field(default_factory=lambda: [0, 3])
-    y_range: list[int] = field(default_factory=lambda: [0, 3])
-    num_nonzero_params: int = 3
-    strength: list[float] = field(default_factory=lambda: [0.1])
-    num_diffeo_per_strength: int = 10
-
-
 #%%
 class diffeo_container:
   '''

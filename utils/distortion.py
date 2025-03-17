@@ -5,10 +5,30 @@ import torch as t
 import torch.nn as nn
 import math
 from tqdm import tqdm
-#from torch_perlin_noise import rand_perlin_2d_octaves
-# import matplotlib.pyplot as plt
+
 #%%
-def get_version(): print('version channel mixing')
+def get_version(): print('Banded Diffeo')
+
+from dataclasses import dataclass, field
+
+@dataclass
+class DiffeoConfig:
+    """Configuration for diffeomorphism parameters"""
+    resolution: int = 192
+    x_range: list[int] = field(default_factory=lambda: [0, 3])
+    y_range: list[int] = field(default_factory=lambda: [0, 3])
+    num_nonzero_params: int = 3
+    strength: list[float] = field(default_factory=lambda: [0.1])
+    num_diffeo_per_strength: int = 10
+
+
+def read_diffeo_from_path(path: str, device = t.device("cpu")):
+   diffeo_param_dict = t.load(path, weights_only=False, map_location = device)
+   diffeo_param = diffeo_param_dict['AB']
+   inv_diffeo_param = diffeo_param_dict['inv_AB']
+   diffeo_strenghts = diffeo_param_dict['diffeo_config']['strength']
+   num_of_diffeo_per_strength = diffeo_param_dict['diffeo_config']['num_diffeo_per_strength']
+   return diffeo_param, inv_diffeo_param, diffeo_strenghts, num_of_diffeo_per_strength
 
 def dense_transform_amplitude(x_length, 
                               y_length, 
@@ -184,21 +204,21 @@ def sparse_transform_amplitude(x_cutoff,
 
 
 
-def create_grid_sample(x_length: int, 
-                       y_length: int, 
+def create_grid_sample(x_res: int, 
+                       y_res: int, 
                        A_list: torch.Tensor, 
                        B_list: torch.Tensor) -> torch.Tensor:
     '''
     Sin distortion for torch.nn.functional.grid_sample, the grid is from -1 to 1
 
     Args:
-    - x_length (int): Length of x-axis of image.
-    - y_length (int): Length of y-axis of image.
+    - x_res (int): Length of x-axis of image.
+    - y_res (int): Length of y-axis of image.
     - A_list (torch.Tensor): List of square matrices of coefficients, for x coordinate distortion
     - B_list (torch.Tensor): Same as A_list but for y coordinate distortion
 
     Returns:
-    - torch.Tensor that has shape (N, x_length, y_length, 2) that can be fed into torch.nn.functional.grid_sample
+    - torch.Tensor that has shape (N, x_res, y_res, 2) that can be fed into torch.nn.functional.grid_sample
     - the last dimension is length 2 because one is for x and one is for y.
     '''
     flow_grids = []
@@ -217,8 +237,8 @@ def create_grid_sample(x_length: int,
         unique_B_x, inv_index_B_x = torch.unique(freq_B_arg[1], return_inverse=True)
         unique_B_y, inv_index_B_y = torch.unique(freq_B_arg[0], return_inverse=True)
 
-        x = torch.linspace(-1, 1, steps=x_length)
-        y = torch.linspace(-1, 1, steps=y_length)
+        x = torch.linspace(-1, 1, steps=x_res)
+        y = torch.linspace(-1, 1, steps=y_res)
         X, Y = torch.meshgrid(x, y, indexing='ij')
 
         normalization_A = 1 / max_A_freq
